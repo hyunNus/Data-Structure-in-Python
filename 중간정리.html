@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multimodal Stock Analysis: Interactive Report</title>
+    <!-- 
+        보고서 원본: [Research] Multimodal Stock Analysis: Polygon + FinBERT + SHAP
+        대화형 변환: Gemini
+    -->
+    
+    <!-- Placeholder Comments -->
+    <!-- Chosen Palette: Calm Research (Stone neutrals with Blue/Orange accents) -->
+    <!-- Application Structure Plan: A tabbed SPA (Overview, Data, Model, SHAP Analysis, Config). This structure mirrors the research process, guiding the user from the high-level goal to the raw data, the model, and finally the core findings (SHAP). This is more intuitive for exploration than a linear report. Key interaction is the Ticker selection in the 'Data' tab, which updates price/sentiment charts, directly showing the multimodal input. -->
+    <!-- Visualization & Content Choices:
+        - Report Info: Price/Sentiment data -> Goal: Compare inputs -> Viz: Two separate, synced line charts (Chart.js) -> Interaction: Ticker Dropdown -> Justification: Clearly separates and visualizes the two data modalities.
+        - Report Info: Training Loss -> Goal: Show model learning -> Viz: Line Chart (Chart.js) -> Justification: Standard way to show model convergence.
+        - Report Info: SHAP Groupings (Chart vs News) -> Goal: Show core finding over time -> Viz: Stacked Bar Chart (Chart.js) -> Justification: Directly answers the report's main question (which factor was more dominant, and when).
+        - Report Info: SHAP Feature Importance -> Goal: Show key drivers -> Viz: Horizontal Bar Chart (Chart.js) -> Justification: Recreates a SHAP summary plot without Python.
+        - Report Info: Hydra Configs -> Goal: Show experiment setup -> Viz: HTML <pre> tag -> Justification: Clearly shows the "config-as-code" principle from the report.
+        - Library: Chart.js (Canvas-based). -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <style>
+        /* Tailwind의 Inter 폰트 기본 적용 */
+        body { font-family: 'Inter', sans-serif; }
+        
+        /* 활성 탭 스타일 */
+        .tab-button.active {
+            border-bottom-color: #2563EB; /* blue-600 */
+            color: #2563EB;
+            font-weight: 600;
+        }
+        
+        /* 비활성 탭 스타일 */
+        .tab-button {
+            border-bottom: 2px solid transparent;
+            color: #6B7280; /* gray-500 */
+        }
+        
+        /* 섹션 숨김 처리 */
+        .tab-section { display: none; }
+        .tab-section.active { display: block; }
+
+        /* Chart.js 컨테이너 스타일 (명세서 요구사항 준수) */
+        .chart-container {
+            position: relative;
+            width: 100%;
+            max-width: 800px; /* 더 넓은 대시보드를 위해 800px로 설정 */
+            margin-left: auto;
+            margin-right: auto;
+            height: 350px; /* 기본 높이 */
+            max-height: 400px;
+        }
+        
+        @media (min-width: 768px) {
+            .chart-container {
+                height: 400px;
+            }
+        }
+        
+        /* Hydra config 코드 블록 스타일 */
+        pre {
+            background-color: #1F2937; /* gray-900 */
+            color: #E5E7EB; /* gray-200 */
+            padding: 1rem;
+            border-radius: 0.5rem; /* rounded-lg */
+            overflow-x: auto;
+            font-family: 'Courier New', Courier, monospace;
+        }
+        
+        .icon {
+            font-size: 1.5rem;
+            margin-right: 0.5rem;
+        }
+    </style>
+</head>
+<body class="bg-stone-50 text-stone-800">
+
+    <div class="max-w-7xl mx-auto p-4 md:p-8">
+        
+        <!-- 1. 헤더 -->
+        <header class="mb-8 pb-4 border-b border-stone-200">
+            <h1 class="text-3xl md:text-4xl font-bold text-blue-900">Multimodal Stock Analysis: Interactive Report</h1>
+            <p class="text-lg text-stone-600 mt-2">Polygon.io, FinBERT, and SHAP Explanations</p>
+        </header>
+
+        <!-- 2. 네비게이션 탭 -->
+        <nav class="flex border-b-2 border-stone-200 mb-8 space-x-4 md:space-x-8">
+            <button class="tab-button active py-3 px-1 md:px-4 text-sm md:text-base" data-tab="overview">
+                <span class="icon">🏠</span>Overview
+            </button>
+            <button class="tab-button py-3 px-1 md:px-4 text-sm md:text-base" data-tab="data">
+                <span class="icon">📊</span>Data Pipeline
+            </button>
+            <button class="tab-button py-3 px-1 md:px-4 text-sm md:text-base" data-tab="model">
+                <span class="icon">🧠</span>Model & Training
+            </button>
+            <button class="tab-button py-3 px-1 md:px-4 text-sm md:text-base" data-tab="shap">
+                <span class="icon">💡</span>SHAP Analysis
+            </button>
+            <button class="tab-button py-3 px-1 md:px-4 text-sm md:text-base" data-tab="config">
+                <span class="icon">⚙️</span>Configuration
+            </button>
+        </nav>
+
+        <!-- 3. 컨텐츠 섹션 -->
+        <main>
+            <!-- 3.1. Overview 섹션 -->
+            <section id="overview" class="tab-section active">
+                <h2 class="text-2xl font-bold text-stone-900 mb-4">1. 프로젝트 개요</h2>
+                <div class="space-y-4 text-stone-700 text-base md:text-lg leading-relaxed">
+                    <p>본 프로젝트는 미국 주식 시장(예: META, GOOGL)을 대상으로, 정형 데이터(주가 차트)와 비정형 데이터(뉴스 센티멘트)를 결합한 멀티모달(Multimodal) 시계열 예측 모델을 구축합니다.</p>
+                    <p class="font-semibold text-blue-800">
+                        핵심 목표는 단순한 예측 정확도를 넘어, SHAP(SHapley Additive exPlanations)을 통해 주가 변동의 핵심 동인(Key Driver)이 기술적 요인(Chart)인지, 아니면 시장 심리(News)인지를 시계열적으로 분리하고 해석하는 것입니다.
+                    </p>
+                </div>
+                <div class="mt-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    <div class="bg-white p-6 rounded-lg shadow-lg border border-stone-200">
+                        <h3 class="text-xl font-semibold mb-2 text-blue-900">Data Acquisition</h3>
+                        <p class="text-stone-600">Polygon.io (주가, 과거 뉴스)<br>Tavily AI (심층 분석)</p>
+                    </div>
+                    <div class="bg-white p-6 rounded-lg shadow-lg border border-stone-200">
+                        <h3 class="text-xl font-semibold mb-2 text-blue-900">NLP Model</h3>
+                        <p class="text-stone-600"><code>ProsusAI/finbert</code> (금융 특화 감성 분석)</p>
+                    </div>
+                    <div class="bg-white p-6 rounded-lg shadow-lg border border-stone-200">
+                        <h3 class="text-xl font-semibold mb-2 text-blue-900">Explainability (XAI)</h3>
+                        <p class="text-stone-600"><code>shap</code> (GradientExplainer)<br>PyTorch (LSTM / GRU)</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 3.2. Data Pipeline 섹션 -->
+            <section id="data" class="tab-section">
+                <h2 class="text-2xl font-bold text-stone-900 mb-4">2. 대화형 데이터 파이프라인</h2>
+                <p class="text-stone-700 mb-6">모델의 두 가지 주요 입력인 '주가'와 '뉴스 감성'을 시각적으로 탐색합니다. 종목을 선택하여 두 데이터 스트림이 시간에 따라 어떻게 변하는지 확인하세요.</p>
+                
+                <div class="mb-6 max-w-xs">
+                    <label for="tickerSelect" class="block text-sm font-medium text-stone-700 mb-2">종목 선택:</label>
+                    <select id="tickerSelect" class="w-full p-2 border border-stone-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500">
+                        <option value="META" selected>META (Meta Platforms, Inc.)</option>
+                        <option value="GOOGL">GOOGL (Alphabet Inc.)</option>
+                    </select>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                    <div class="bg-white p-4 rounded-lg shadow-lg border border-stone-200">
+                        <h3 class="text-xl font-semibold mb-4 text-center text-stone-800">Chart Input: 주가(종가) 추이</h3>
+                        <div class="chart-container">
+                            <canvas id="priceChart"></canvas>
+                        </div>
+                    </div>
+                    <div class="bg-white p-4 rounded-lg shadow-lg border border-stone-200">
+                        <h3 class="text-xl font-semibold mb-4 text-center text-stone-800">News Input: FinBERT 감성 점수 추이</h3>
+                        <div class="chart-container">
+                            <canvas id="sentimentChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 3.3. Model & Training 섹션 -->
+            <section id="model" class="tab-section">
+                <h2 class="text-2xl font-bold text-stone-900 mb-4">3. 모델 및 학습 과정</h2>
+                <p class="text-stone-700 mb-6">본 연구는 PyTorch 기반의 LSTM(Long Short-Term Memory) 모델을 사용합니다. 이 모델은 차트 데이터와 뉴스 감성 점수를 포함한 다중 피처를 입력받아 시계열 패턴을 학습합니다.</p>
+                
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    <div class="bg-white p-6 rounded-lg shadow-lg border border-stone-200">
+                        <h3 class="text-xl font-semibold mb-4 text-center text-stone-800">모델 아키텍처 (개념)</h3>
+                        <div class="space-y-4">
+                            <div class="flex items-center p-4 bg-blue-50 rounded-lg border border-blue-200">
+                                <span class="icon">📈</span>
+                                <div>
+                                    <h4 class="font-semibold">Chart Features</h4>
+                                    <p class="text-sm text-stone-600">(OHLCV, RSI, MACD...)</p>
+                                </div>
+                            </div>
+                            <div class="flex items-center p-4 bg-orange-50 rounded-lg border border-orange-200">
+                                <span class="icon">📰</span>
+                                <div>
+                                    <h4 class="font-semibold">News Feature</h4>
+                                    <p class="text-sm text-stone-600">(Sentiment Score)</p>
+                                </div>
+                            </div>
+                            <div class="text-center text-2xl font-bold text-stone-500">↓</div>
+                            <div class="flex items-center justify-center p-6 bg-stone-100 rounded-lg border border-stone-300">
+                                <span class="icon">🧠</span>
+                                <h4 class="text-lg font-semibold">Multimodal LSTM Core</h4>
+                            </div>
+                            <div class="text-center text-2xl font-bold text-stone-500">↓</div>
+                            <div class="flex items-center justify-center p-4 bg-green-50 rounded-lg border border-green-200">
+                                <span class="icon">💰</span>
+                                <h4 class="text-lg font-semibold">Price Prediction (t+1)</h4>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bg-white p-4 rounded-lg shadow-lg border border-stone-200">
+                        <h3 class="text-xl font-semibold mb-4 text-center text-stone-800">모델 학습 손실 (가상)</h3>
+                        <p class="text-sm text-center text-stone-600 mb-4">Epoch가 진행됨에 따라 모델의 손실(MSE)이 감소하며 수렴하는 과정을 보여줍니다.</p>
+                        <div class="chart-container">
+                            <canvas id="lossChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 3.4. SHAP Analysis 섹션 -->
+            <section id="shap" class="tab-section">
+                <h2 class="text-2xl font-bold text-stone-900 mb-4">4. 핵심 분석: SHAP 영향력 해석</h2>
+                <p class="text-stone-700 mb-6">이 섹션은 본 연구의 핵심 결과입니다. SHAP 분석을 통해 모델의 예측이 '차트 기술적 요인'과 '뉴스 감성 요인' 중 어느 것에 더 크게 의존했는지 시계열로 분해합니다.</p>
+
+                <div class="bg-white p-4 rounded-lg shadow-lg border border-stone-200 mb-8">
+                    <h3 class="text-xl font-semibold mb-4 text-center text-stone-800">일별 영향력 기여도 (Chart vs News) - META (가상)</h3>
+                    <p class="text-sm text-center text-stone-600 mb-4">
+                        주가 변동 예측에 대한 일별 SHAP 값의 총합을 'Chart' 그룹과 'News' 그룹으로 나누어 쌓았습니다.<br>
+                        <span class="font-semibold text-blue-600">파란색(Chart)</span>이 높으면 기술적 분석이, <span class="font-semibold text-orange-600">주황색(News)</span>이 높으면 시장 심리가 주도한 날입니다.
+                    </p>
+                    <div class="chart-container">
+                        <canvas id="shapImpactChart"></canvas>
+                    </div>
+                </div>
+                
+                <div class="bg-white p-4 rounded-lg shadow-lg border border-stone-200">
+                    <h3 class="text-xl font-semibold mb-4 text-center text-stone-800">전체 기간 피처 중요도 (SHAP 요약)</h3>
+                    <p class="text-sm text-center text-stone-600 mb-4">전체 테스트 기간 동안 평균적인 SHAP 절대값 (영향력)이 높았던 피처들입니다.</p>
+                    <div class="chart-container" style="height: 450px; max-height: 500px;">
+                        <canvas id="shapSummaryChart"></canvas>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 3.5. Configuration 섹션 -->
+            <section id="config" class="tab-section">
+                <h2 class="text-2xl font-bold text-stone-900 mb-4">5. Hydra 실험 설정</h2>
+                <p class="text-stone-700 mb-6">본 연구는 <code>hydra-core</code>를 사용하여 모든 실험을 재현 가능하도록 관리합니다. 코드를 수정하지 않고 YAML 설정 파일을 통해 파라미터를 제어합니다.</p>
+                
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div>
+                        <h3 class="text-xl font-semibold mb-3">메인 설정 (config.yaml)</h3>
+                        <pre><code># config/config.yaml
+defaults:
+  - data: polygon
+  - model: lstm
+  - _self_
+
+project_name: "MultimodalStockSHAP"
+run_name: "default_run_${now:%Y-%m-%d_%H-%M-%S}"
+
+main:
+  seed: 42
+  hydra_job_dir: "${hydra:runtime.cwd}/outputs/${run_name}"
+
+api_keys:
+  polygon: ${oc.env:POLYGON_API_KEY}
+  tavily: ${oc.env:TAVILY_API_KEY}
+
+training:
+  batch_size: 32
+  epochs: 50
+  learning_rate: 0.001
+  test_split_ratio: 0.15
+</code></pre>
+                    </div>
+                    <div>
+                        <h3 class="text-xl font-semibold mb-3">데이터 설정 (data/polygon.yaml)</h3>
+                        <pre><code># config/data/polygon.yaml
+name: polygon_dataset
+tickers: ["META", "GOOGL"]
+start_date: "2023-01-01"
+end_date: "2025-01-01"
+window_size: 20
+
+missing_news_strategy: 'zero'
+
+technical_indicators:
+  - "RSI"
+  - "MACD"
+  - "BBANDS"
+</code></pre>
+                        <h3 class="text-xl font-semibold mb-3 mt-6">모델 설정 (model/lstm.yaml)</h3>
+                        <pre><code># config/model/lstm.yaml
+name: "lstm"
+hidden_size: 64
+num_layers: 2
+dropout: 0.2
+</code></pre>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script>
+        document.addEventListener("DOMContentLoaded", () => {
+            
+            // --- [데이터 주입 지점] ---
+            // Colab에서 실행한 실제 데이터를 이 곳에 JSON 형식으로 붙여넣으세요.
+            // 이 값이 null이면, 아래의 가상 데이터(generateMockData)가 사용됩니다.
+            // 
+            // 1. Python (Pandas)에서: 
+            //    df_shap_impact.to_json(orient='records')
+            //    df_summary.to_json(orient='split')
+            //    ... 등으로 데이터를 JSON으로 변환하세요.
+            // 2. 그 JSON 문자열을 이 `null` 자리에 붙여넣으세요.
+            //    (예: window.REAL_DATA = { ...JSON 내용... };)
+            // 
+            // [필요한 데이터 형식]
+            // window.REAL_DATA = {
+            //     dates: ["2024-01-01", "2024-01-02", ...], // 테스트 데이터의 날짜 배열
+            //     META: {
+            //         price: [300, 301, ...], // 실제 종가
+            //         sentiment: [0.1, -0.2, ...] // 실제 감성 점수
+            //     },
+            //     GOOGL: { /* GOOGL 데이터 (동일 형식) */ },
+            //     loss: [1.5, 1.4, ...], // Epoch별 실제 Loss
+            //     shap: { 
+            //         // 일별 영향력 (shapImpactChart) - dates와 길이가 같아야 함
+            //         chart: [0.5, 0.6, ...], // (shap_impact_analysis.csv 에서 추출)
+            //         news: [0.2, 0.1, ...]  // (shap_impact_analysis.csv 에서 추출)
+            //     },
+            //     shapSummary: {
+            //         // 피처 중요도 (shapSummaryChart)
+            //         labels: ['Sentiment', 'Close', 'RSI', ...],
+            //         importance: [0.45, 0.38, 0.25, ...]
+            //     }
+            // };
+            window.REAL_DATA = null; 
+            
+            // --- 전역 차트 객체 저장소 ---
+            const charts = {
+                price: null,
+                sentiment: null,
+                loss: null,
+                shapImpact: null,
+                shapSummary: null
+            };
+
+            // --- 탭 네비게이션 로직 ---
+            const tabButtons = document.querySelectorAll(".tab-button");
+            const tabSections = document.querySelectorAll(".tab-section");
+
+            tabButtons.forEach(button => {
+                button.addEventListener("click", () => {
+                    const tabName = button.getAttribute("data-tab");
+
+                    // 버튼 활성 상태 변경
+                    tabButtons.forEach(btn => btn.classList.remove("active"));
+                    button.classList.add("active");
+
+                    // 섹션 활성 상태 변경
+                    tabSections.forEach(section => {
+                        if (section.id === tabName) {
+                            section.classList.add("active");
+                        } else {
+                            section.classList.remove("active");
+                        }
+                    });
+                    
+                    // 활성화된 탭에 따라 차트 초기화 (중복 방지)
+                    switch(tabName) {
+                        case 'data':
+                            initDataCharts('META'); // 기본값으로 초기화
+                            break;
+                        case 'model':
+                            initLossChart();
+                            break;
+                        case 'shap':
+                            initShapImpactChart();
+                            initShapSummaryChart();
+                    break;
+                    }
+                });
+            });
+            
+            // --- Ticker 선택 로직 ---
+            const tickerSelect = document.getElementById("tickerSelect");
+            if (tickerSelect) {
+                tickerSelect.addEventListener("change", (e) => {
+                    initDataCharts(e.target.value);
+                });
+            }
+
+            // --- 가상 데이터 생성기 ---
+            function generateMockData() {
+                const dates = Array.from({length: 60}, (_, i) => {
+                    const date = new Date('2024-01-01');
+                    date.setDate(date.getDate() + i * 7); // 주간 데이터
+                    return date.toISOString().split('T')[0];
+                });
+                
+                const generateSeries = (base, noise) => {
+                    let val = base;
+                    return dates.map(() => {
+                        val += (Math.random() - 0.5) * noise;
+                        return Math.max(0, val); // 0 이하 방지
+                    });
+                };
+                
+                const generateSentiment = () => {
+                    return dates.map(() => (Math.random() - 0.5) * 1.6); // -0.8 ~ 0.8
+                };
+
+                return {
+                    dates,
+                    META: {
+                        price: generateSeries(300, 20),
+                        sentiment: generateSentiment()
+                    },
+                    GOOGL: {
+                        price: generateSeries(150, 10),
+                        sentiment: generateSentiment()
+                    },
+                    loss: generateSeries(1.5, 0.1).map((d, i) => Math.max(0.1, d * Math.exp(-i * 0.1))),
+                    shap: {
+                        chart: generateSeries(0.5, 0.2),
+                        news: generateSeries(0.2, 0.15)
+                    },
+                    shapSummary: {
+                        labels: ['Sentiment', 'Close', 'RSI', 'Volume', 'MACD', 'BBANDS', 'Open', 'High'],
+                        importance: [0.45, 0.38, 0.25, 0.22, 0.18, 0.15, 0.12, 0.10]
+                    }
+                };
+            }
+            
+            // const mockData = generateMockData(); // <- 이 줄을 수정
+            // REAL_DATA가 있으면 그것을 사용하고, 없으면 (null이면) 가상 데이터를 생성
+            const mockData = window.REAL_DATA || generateMockData();
+
+            // --- 차트 렌더링 함수 ---
+
+            // 데이터 파이프라인 차트 (Price & Sentiment)
+            function initDataCharts(ticker) {
+                const data = mockData[ticker];
+                const commonOptions = {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: { 
+                            ticks: { 
+                                maxTicksLimit: 10,
+                                // Chart.js 3+ 에서는 autoSkip이 기본
+                            } 
+                        }
+                    },
+                    plugins: { tooltip: { mode: 'index', intersect: false } }
+                };
+
+                // Price Chart
+                if (charts.price) charts.price.destroy();
+                const priceCtx = document.getElementById('priceChart').getContext('2d');
+                charts.price = new Chart(priceCtx, {
+                    type: 'line',
+                    data: {
+                        labels: mockData.dates,
+                        datasets: [{
+                            label: `${ticker} 종가`,
+                            data: data.price,
+                            borderColor: 'rgba(59, 130, 246, 1)', // blue-500
+                            backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                            fill: true,
+                            tension: 0.1
+                        }]
+                    },
+                    options: { ...commonOptions, scales: { ...commonOptions.scales, y: { title: { display: true, text: 'Price ($)' } } } }
+                });
+
+                // Sentiment Chart
+                if (charts.sentiment) charts.sentiment.destroy();
+                const sentimentCtx = document.getElementById('sentimentChart').getContext('2d');
+                charts.sentiment = new Chart(sentimentCtx, {
+                    type: 'bar',
+                    data: {
+                        labels: mockData.dates,
+                        datasets: [{
+                            label: `${ticker} 감성 점수`,
+                            data: data.sentiment,
+                            backgroundColor: data.sentiment.map(d => d >= 0 ? 'rgba(249, 115, 22, 0.6)' : 'rgba(107, 114, 128, 0.6)'), // orange-500 / gray-500
+                            borderColor: data.sentiment.map(d => d >= 0 ? 'rgba(249, 115, 22, 1)' : 'rgba(107, 114, 128, 1)'),
+                            borderWidth: 1
+                        }]
+                    },
+                    options: { ...commonOptions, scales: { ...commonOptions.scales, y: { title: { display: true, text: 'Sentiment Score (-1 to 1)' } } } }
+                });
+            }
+
+            // 모델 학습 손실 차트
+            function initLossChart() {
+                if (charts.loss) return; // 한 번만 그림
+                const lossCtx = document.getElementById('lossChart').getContext('2d');
+                charts.loss = new Chart(lossCtx, {
+                    type: 'line',
+                    data: {
+                        labels: Array.from({length: mockData.loss.length}, (_, i) => `Epoch ${i+1}`),
+                        datasets: [{
+                            label: 'Training MSE Loss',
+                            data: mockData.loss,
+                            borderColor: 'rgba(217, 70, 239, 1)', // fuchsia-500
+                            backgroundColor: 'rgba(217, 70, 239, 0.1)',
+                            fill: true,
+                            tension: 0.1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: { y: { title: { display: true, text: 'MSE Loss' } } }
+                    }
+                });
+            }
+
+            // SHAP 일별 영향력 차트
+            function initShapImpactChart() {
+                if (charts.shapImpact) return; // 한 번만 그림
+                const shapImpactCtx = document.getElementById('shapImpactChart').getContext('2d');
+                charts.shapImpact = new Chart(shapImpactCtx, {
+                    type: 'bar',
+                    data: {
+                        labels: mockData.dates,
+                        datasets: [
+                            {
+                                label: 'Chart Impact',
+                                data: mockData.shap.chart,
+                                backgroundColor: 'rgba(59, 130, 246, 0.7)' // blue-500
+                            },
+                            {
+                                label: 'News Impact',
+                                data: mockData.shap.news,
+                                backgroundColor: 'rgba(249, 115, 22, 0.7)' // orange-500
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            x: { stacked: true, ticks: { maxTicksLimit: 10 } },
+                            y: { stacked: true, title: { display: true, text: 'SHAP Value (Absolute Sum)' } }
+                        },
+                        plugins: { tooltip: { mode: 'index' } }
+                    }
+                });
+            }
+            
+            // SHAP 요약 차트
+            function initShapSummaryChart() {
+                if (charts.shapSummary) return; // 한 번만 그림
+                const shapSummaryCtx = document.getElementById('shapSummaryChart').getContext('2d');
+                charts.shapSummary = new Chart(shapSummaryCtx, {
+                    type: 'bar', // 수평 바 차트
+                    data: {
+                        labels: mockData.shapSummary.labels,
+                        datasets: [{
+                            label: 'Mean Absolute SHAP Value',
+                            data: mockData.shapSummary.importance,
+                            backgroundColor: [
+                                'rgba(249, 115, 22, 0.7)', // Sentiment (orange)
+                                'rgba(59, 130, 246, 0.7)', // Close (blue)
+                                'rgba(59, 130, 246, 0.6)',
+                                'rgba(59, 130, 246, 0.5)',
+                                'rgba(59, 130, 246, 0.4)',
+                                'rgba(59, 130, 246, 0.3)',
+                                'rgba(59, 130, 246, 0.2)',
+                                'rgba(59, 130, 246, 0.1)'
+                            ],
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        indexAxis: 'y', // 이 옵션이 수평 바 차트를 만듭니다.
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            x: { title: { display: true, text: 'Mean Feature Importance (SHAP)' } }
+                        },
+                        plugins: {
+                            legend: { display: false }
+                        }
+                    }
+                });
+            }
+
+            // --- 초기화 ---
+            // 페이지 로드 시 기본 'Overview' 탭 활성화 (CSS에서 이미 처리)
+            // 사용자가 다른 탭을 클릭할 때 해당 차트가 그려지도록 설정
+        });
+    </script>
+</body>
+</html>
